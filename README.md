@@ -1,4 +1,4 @@
-# Fastspring Webhooks
+# Fastspring Slack Bridge
 
 A lightweight Go service that receives Fastspring webhook events and sends notifications to Slack. Designed for deployment on Google Cloud Run.
 
@@ -39,7 +39,7 @@ curl -X POST http://localhost:8080/webhooks/fastspring \
 
 ```bash
 # Build and deploy
-gcloud run deploy fastspring-webhooks \
+gcloud run deploy fastspring-slack-bridge \
   --source . \
   --region us-central1 \
   --allow-unauthenticated \
@@ -58,7 +58,7 @@ gcloud builds submit \
 
 1. Go to **Developer Tools → Webhooks → Configuration** in Fastspring dashboard
 2. Click **Add Webhook**
-3. Enter your Cloud Run URL: `https://fastspring-webhooks-xxxxx.run.app/webhooks/fastspring`
+3. Enter your Cloud Run URL: `https://fastspring-slack-bridge-xxxxx.run.app/webhooks/fastspring`
 4. Set HMAC SHA256 secret (same as `FASTSPRING_HMAC_SECRET`)
 5. Select events:
    - `order.completed`

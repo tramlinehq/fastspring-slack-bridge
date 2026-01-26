@@ -1,3 +1,3 @@
-module github.com/kitallis/fastspring-webhooks
+module github.com/tramlinehq/fastspring-slack-bridge
 
 go 1.24.6

@@ -43,13 +43,13 @@ jobs:
 
       - name: Build and Push Docker image
         run: |
-          docker build -t gcr.io/${{ secrets.PROJECT_ID }}/fastspring-webhooks:${{ github.sha }} .
-          docker push gcr.io/${{ secrets.PROJECT_ID }}/fastspring-webhooks:${{ github.sha }}
+          docker build -t gcr.io/${{ secrets.PROJECT_ID }}/fastspring-slack-bridge:${{ github.sha }} .
+          docker push gcr.io/${{ secrets.PROJECT_ID }}/fastspring-slack-bridge:${{ github.sha }}
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy fastspring-webhooks \
-            --image gcr.io/${{ secrets.PROJECT_ID }}/fastspring-webhooks:${{ github.sha }} \
+          gcloud run deploy fastspring-slack-bridge \
+            --image gcr.io/${{ secrets.PROJECT_ID }}/fastspring-slack-bridge:${{ github.sha }} \
             --platform managed \
             --region europe-west3 \
             --project ${{ secrets.PROJECT_ID }} \
