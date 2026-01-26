@@ -31,7 +31,7 @@ type OrderData struct {
 	ID           string   `json:"id"`
 	Reference    string   `json:"reference"`
 	Currency     string   `json:"currency"`
-	Total        float64  `json:"total"`
+	Total        any      `json:"total"`
 	TotalDisplay string   `json:"totalDisplay"`
 	Customer     Customer `json:"customer"`
 	Items        []Item   `json:"items"`
@@ -45,11 +45,11 @@ type Customer struct {
 }
 
 type Item struct {
-	Product  string  `json:"product"`
-	Display  string  `json:"display"`
-	Quantity int     `json:"quantity"`
-	Price    float64 `json:"price"`
-	Subtotal float64 `json:"subtotal"`
+	Product  string `json:"product"`
+	Display  string `json:"display"`
+	Quantity any    `json:"quantity"`
+	Price    any    `json:"price"`
+	Subtotal any    `json:"subtotal"`
 }
 
 type SubscriptionData struct {
@@ -57,7 +57,7 @@ type SubscriptionData struct {
 	Subscription string   `json:"subscription"`
 	Product      string   `json:"product"`
 	Currency     string   `json:"currency"`
-	Total        float64  `json:"total"`
+	Total        any      `json:"total"`
 	TotalDisplay string   `json:"totalDisplay"`
 	Customer     Customer `json:"customer"`
 	State        string   `json:"state"`
@@ -69,7 +69,7 @@ type ReturnData struct {
 	ID           string   `json:"id"`
 	OrderID      string   `json:"order"`
 	Currency     string   `json:"currency"`
-	Total        float64  `json:"total"`
+	Total        any      `json:"total"`
 	TotalDisplay string   `json:"totalDisplay"`
 	Customer     Customer `json:"customer"`
 	Reason       string   `json:"reason"`
@@ -79,7 +79,7 @@ type QuoteData struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Currency     string   `json:"currency"`
-	Total        float64  `json:"total"`
+	Total        any      `json:"total"`
 	TotalDisplay string   `json:"totalDisplay"`
 	Customer     Customer `json:"customer"`
 	ExpiresAt    string   `json:"expirationDateValue"`
@@ -312,7 +312,7 @@ func formatOrderMessage(data OrderData, live bool, title string, severity string
 
 	items := ""
 	for _, item := range data.Items {
-		items += fmt.Sprintf("• %s (x%d) - %s\n", item.Display, item.Quantity, formatCurrency(item.Subtotal, data.Currency))
+		items += fmt.Sprintf("• %s (x%v) - %s\n", item.Display, item.Quantity, formatCurrency(item.Subtotal, data.Currency))
 	}
 
 	text := fmt.Sprintf(":%s: [%s] %s\n\nCustomer: %s %s (%s)\nCompany: %s\nOrder: %s\nTotal: %s",
@@ -424,8 +424,8 @@ func envLabel(live bool) string {
 	return "TEST"
 }
 
-func formatCurrency(amount float64, currency string) string {
-	return fmt.Sprintf("%s %.2f", currency, amount)
+func formatCurrency(amount any, currency string) string {
+	return fmt.Sprintf("%s %v", currency, amount)
 }
 
 func sendSlackNotification(message SlackMessage) error {
