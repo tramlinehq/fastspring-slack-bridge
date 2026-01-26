@@ -427,9 +427,9 @@ func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
 	if len(data.Items) > 0 {
 		text += "\n\nItems:"
 		for _, item := range data.Items {
-			subtotalStr := fmt.Sprintf("%v", item.Subtotal)
-			if item.SubtotalDisplay != "" {
-				subtotalStr = item.SubtotalDisplay
+			subtotalStr := item.SubtotalDisplay
+			if subtotalStr == "" {
+				subtotalStr = formatAnyAmount(item.Subtotal, data.QuoteCurrency)
 			}
 			text += fmt.Sprintf("\n• %s (x%v) - %s", item.Display, item.Quantity, subtotalStr)
 		}
@@ -444,6 +444,26 @@ func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
 
 func formatCurrency(amount any, currency string) string {
 	return fmt.Sprintf("%s %v", currency, amount)
+}
+
+func formatAnyAmount(amount any, currency string) string {
+	switch v := amount.(type) {
+	case float64:
+		if currency != "" {
+			return fmt.Sprintf("%s %.2f", currency, v)
+		}
+		return fmt.Sprintf("%.2f", v)
+	case string:
+		if currency != "" && v != "" {
+			return fmt.Sprintf("%s %s", currency, v)
+		}
+		return v
+	default:
+		if currency != "" {
+			return fmt.Sprintf("%s %v", currency, amount)
+		}
+		return fmt.Sprintf("%v", amount)
+	}
 }
 
 func sendSlackNotification(message SlackMessage) error {
