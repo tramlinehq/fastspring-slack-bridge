@@ -4,12 +4,38 @@ A lightweight Go service that receives Fastspring webhook events and sends notif
 
 ## Supported Events
 
+### Orders
 | Event | Description |
 |-------|-------------|
-| `order.completed` | New order/payment completed |
-| `subscription.charge.completed` | Recurring subscription payment |
-| `subscription.activated` | New subscription created |
+| `order.completed` | Order/payment completed |
+| `order.canceled` | Order canceled |
+| `order.failed` | Order failed |
 | `order.payment.pending` | Payment processed but not yet received |
+| `order.approval.pending` | Invoice order awaiting approval |
+
+### Subscriptions
+| Event | Description |
+|-------|-------------|
+| `subscription.activated` | New subscription created |
+| `subscription.deactivated` | Subscription deactivated |
+| `subscription.canceled` | Subscription canceled |
+| `subscription.uncanceled` | Subscription reactivated |
+| `subscription.updated` | Subscription modified |
+| `subscription.paused` | Subscription paused |
+| `subscription.resumed` | Subscription resumed |
+| `subscription.charge.completed` | Recurring payment received |
+| `subscription.charge.failed` | Recurring payment failed |
+| `subscription.trial.reminder` | Trial ending soon |
+| `subscription.payment.reminder` | Upcoming payment reminder |
+| `subscription.payment.overdue` | Payment overdue |
+
+### Other
+| Event | Description |
+|-------|-------------|
+| `return.created` | Refund processed |
+| `invoice.reminder.email` | Invoice reminder sent |
+| `quote.created` | Quote created |
+| `quote.updated` | Quote updated |
 
 ## Environment Variables
 
@@ -35,23 +61,12 @@ curl -X POST http://localhost:8080/webhooks/fastspring \
 
 ## Deploy to Cloud Run
 
-### Option 1: Using gcloud directly
-
 ```bash
-# Build and deploy
 gcloud run deploy fastspring-slack-bridge \
   --source . \
-  --region us-central1 \
+  --region europe-west3 \
   --allow-unauthenticated \
   --set-env-vars "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...,FASTSPRING_HMAC_SECRET=your-secret"
-```
-
-### Option 2: Using Cloud Build
-
-```bash
-gcloud builds submit \
-  --config cloudbuild.yaml \
-  --substitutions _SLACK_WEBHOOK_URL="https://hooks.slack.com/services/...",_FASTSPRING_HMAC_SECRET="your-secret",_REGION="us-central1"
 ```
 
 ## Configure Fastspring
@@ -60,11 +75,7 @@ gcloud builds submit \
 2. Click **Add Webhook**
 3. Enter your Cloud Run URL: `https://fastspring-slack-bridge-xxxxx.run.app/webhooks/fastspring`
 4. Set HMAC SHA256 secret (same as `FASTSPRING_HMAC_SECRET`)
-5. Select events:
-   - `order.completed`
-   - `subscription.charge.completed`
-   - `subscription.activated`
-   - `order.payment.pending`
+5. Select events (all supported events listed above)
 6. Save
 
 ## Create Slack Webhook
