@@ -324,7 +324,6 @@ func severityEmoji(severity string) string {
 }
 
 func formatOrderMessage(data OrderData, live bool, title string, severity string) SlackMessage {
-	env := envLabel(live)
 	emoji := severityEmoji(severity)
 
 	items := ""
@@ -332,9 +331,8 @@ func formatOrderMessage(data OrderData, live bool, title string, severity string
 		items += fmt.Sprintf("• %s (x%v) - %s\n", item.Display, item.Quantity, formatCurrency(item.Subtotal, data.Currency))
 	}
 
-	text := fmt.Sprintf(":%s: [%s] %s\n\nCustomer: %s %s (%s)\nCompany: %s\nOrder: %s\nTotal: %s",
+	text := fmt.Sprintf(":%s: %s\n\nCustomer: %s %s (%s)\nCompany: %s\nOrder: %s\nTotal: %s",
 		emoji,
-		env,
 		title,
 		data.Customer.First,
 		data.Customer.Last,
@@ -352,12 +350,10 @@ func formatOrderMessage(data OrderData, live bool, title string, severity string
 }
 
 func formatSubscriptionMessage(data SubscriptionData, live bool, title string, severity string) SlackMessage {
-	env := envLabel(live)
 	emoji := severityEmoji(severity)
 
-	text := fmt.Sprintf(":%s: [%s] %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nProduct: %s",
+	text := fmt.Sprintf(":%s: %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nProduct: %s",
 		emoji,
-		env,
 		title,
 		data.Customer.First,
 		data.Customer.Last,
@@ -377,12 +373,10 @@ func formatSubscriptionMessage(data SubscriptionData, live bool, title string, s
 }
 
 func formatSubscriptionChargeMessage(data SubscriptionData, live bool, title string, severity string) SlackMessage {
-	env := envLabel(live)
 	emoji := severityEmoji(severity)
 
-	text := fmt.Sprintf(":%s: [%s] %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nAmount: %s",
+	text := fmt.Sprintf(":%s: %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nAmount: %s",
 		emoji,
-		env,
 		title,
 		data.Customer.First,
 		data.Customer.Last,
@@ -399,10 +393,7 @@ func formatSubscriptionChargeMessage(data SubscriptionData, live bool, title str
 }
 
 func formatReturnMessage(data ReturnData, live bool) SlackMessage {
-	env := envLabel(live)
-
-	text := fmt.Sprintf(":rotating_light: [%s] Refund processed\n\nCustomer: %s %s (%s)\nOrder: %s\nAmount: %s\nReason: %s",
-		env,
+	text := fmt.Sprintf(":rotating_light: Refund processed\n\nCustomer: %s %s (%s)\nOrder: %s\nAmount: %s\nReason: %s",
 		data.Customer.First,
 		data.Customer.Last,
 		data.Customer.Email,
@@ -415,10 +406,7 @@ func formatReturnMessage(data ReturnData, live bool) SlackMessage {
 }
 
 func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
-	env := envLabel(live)
-
-	text := fmt.Sprintf(":memo: [%s] %s\n\nQuote: %s (%s)\nTotal: %s\nStatus: %s",
-		env,
+	text := fmt.Sprintf(":memo: %s\n\nQuote: %s (%s)\nTotal: %s\nStatus: %s",
 		title,
 		data.QuoteName,
 		data.Quote,
@@ -447,13 +435,6 @@ func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
 	}
 
 	return SlackMessage{Text: text}
-}
-
-func envLabel(live bool) string {
-	if live {
-		return "LIVE"
-	}
-	return "TEST"
 }
 
 func formatCurrency(amount any, currency string) string {
