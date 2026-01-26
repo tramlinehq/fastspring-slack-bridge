@@ -46,11 +46,12 @@ type Customer struct {
 }
 
 type Item struct {
-	Product  string `json:"product"`
-	Display  string `json:"display"`
-	Quantity any    `json:"quantity"`
-	Price    any    `json:"price"`
-	Subtotal any    `json:"subtotal"`
+	Product         string `json:"product"`
+	Display         string `json:"display"`
+	Quantity        any    `json:"quantity"`
+	Price           any    `json:"price"`
+	Subtotal        any    `json:"subtotal"`
+	SubtotalDisplay string `json:"subtotalDisplay"`
 }
 
 type SubscriptionData struct {
@@ -426,7 +427,11 @@ func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
 	if len(data.Items) > 0 {
 		text += "\n\nItems:"
 		for _, item := range data.Items {
-			text += fmt.Sprintf("\n• %s (x%v) - %s", item.Display, item.Quantity, item.Subtotal)
+			subtotalStr := fmt.Sprintf("%v", item.Subtotal)
+			if item.SubtotalDisplay != "" {
+				subtotalStr = item.SubtotalDisplay
+			}
+			text += fmt.Sprintf("\n• %s (x%v) - %s", item.Display, item.Quantity, subtotalStr)
 		}
 	}
 
