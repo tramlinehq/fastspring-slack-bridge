@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -167,9 +167,10 @@ func verifyHMAC(body []byte, signature string, secret string) bool {
 		return false
 	}
 
+	// Fastspring sends base64-encoded HMAC-SHA256 signature
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(body)
-	expectedMAC := hex.EncodeToString(mac.Sum(nil))
+	expectedMAC := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
