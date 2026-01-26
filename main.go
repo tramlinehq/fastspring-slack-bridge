@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -148,14 +149,23 @@ func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	var payload WebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		log.Printf("Error parsing JSON: %v", err)
+		sendErrorNotification("Failed to parse webhook payload", err.Error())
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
 
+	var processingErrors []string
 	for _, event := range payload.Events {
 		if err := processEvent(event); err != nil {
 			log.Printf("Error processing event %s: %v", event.ID, err)
+			processingErrors = append(processingErrors, fmt.Sprintf("Event %s (%s): %v", event.ID, event.Type, err))
 		}
+	}
+
+	if len(processingErrors) > 0 {
+		sendErrorNotification("Failed to process webhook events", strings.Join(processingErrors, "\n"))
+		http.Error(w, "Failed to process some events", http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -455,4 +465,14 @@ func sendSlackNotification(message SlackMessage) error {
 
 	log.Printf("Slack notification sent successfully")
 	return nil
+}
+
+func sendErrorNotification(title string, details string) {
+	message := SlackMessage{
+		Text: fmt.Sprintf(":rotating_light: *%s*\n\n```%s```", title, details),
+	}
+
+	if err := sendSlackNotification(message); err != nil {
+		log.Printf("Failed to send error notification to Slack: %v", err)
+	}
 }
