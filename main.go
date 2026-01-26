@@ -79,11 +79,15 @@ type ReturnData struct {
 type QuoteData struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
+	Quote        string   `json:"quote"`
 	Currency     string   `json:"currency"`
 	Total        any      `json:"total"`
 	TotalDisplay string   `json:"totalDisplay"`
+	Subtotal     string   `json:"subtotalDisplay"`
 	Customer     Customer `json:"customer"`
+	Recipient    Customer `json:"recipient"`
 	ExpiresAt    string   `json:"expirationDateValue"`
+	Status       string   `json:"status"`
 }
 
 type SlackMessage struct {
@@ -410,15 +414,45 @@ func formatReturnMessage(data ReturnData, live bool) SlackMessage {
 func formatQuoteMessage(data QuoteData, live bool, title string) SlackMessage {
 	env := envLabel(live)
 
-	text := fmt.Sprintf(":memo: [%s] %s\n\nCustomer: %s %s (%s)\nQuote: %s\nTotal: %s",
+	// Use recipient if customer is empty
+	customer := data.Customer
+	if customer.Email == "" {
+		customer = data.Recipient
+	}
+
+	// Use quote ID if name is empty
+	quoteName := data.Name
+	if quoteName == "" {
+		quoteName = data.Quote
+	}
+	if quoteName == "" {
+		quoteName = data.ID
+	}
+
+	// Use subtotal if total display is empty
+	total := data.TotalDisplay
+	if total == "" {
+		total = data.Subtotal
+	}
+
+	text := fmt.Sprintf(":memo: [%s] %s\n\nQuote: %s\nTotal: %s",
 		env,
 		title,
-		data.Customer.First,
-		data.Customer.Last,
-		data.Customer.Email,
-		data.Name,
-		data.TotalDisplay,
+		quoteName,
+		total,
 	)
+
+	// Add customer info if available
+	if customer.Email != "" {
+		text += fmt.Sprintf("\nCustomer: %s %s (%s)", customer.First, customer.Last, customer.Email)
+	}
+	if customer.Company != "" {
+		text += fmt.Sprintf("\nCompany: %s", customer.Company)
+	}
+
+	if data.Status != "" {
+		text += fmt.Sprintf("\nStatus: %s", data.Status)
+	}
 
 	if data.ExpiresAt != "" {
 		text += fmt.Sprintf("\nExpires: %s", data.ExpiresAt)
