@@ -77,6 +77,18 @@ type ReturnData struct {
 	Reason       string   `json:"reason"`
 }
 
+type InvoiceData struct {
+	ID             string   `json:"id"`
+	OrderReference string   `json:"orderReference"`
+	DueDate        string   `json:"dueDate"`
+	Subtotal       any      `json:"subtotal"`
+	Currency       string   `json:"currency"`
+	Contact        Customer `json:"contact"`
+	Items          []Item   `json:"items"`
+	InvoiceUrl     string   `json:"invoiceUrl"`
+	Account        string   `json:"account"`
+}
+
 type QuoteData struct {
 	Quote          string   `json:"quote"`
 	QuoteName      string   `json:"quoteName"`
@@ -245,7 +257,7 @@ func processEvent(event Event) error {
 
 	// Invoice events
 	case "invoice.reminder.email":
-		return handleOrderEvent(event, "Invoice reminder sent", "info")
+		return handleInvoiceEvent(event, "Invoice reminder sent")
 
 	// Quote events
 	case "quote.created":
@@ -306,6 +318,16 @@ func handleQuoteEvent(event Event, title string) error {
 	}
 
 	message := formatQuoteMessage(data, event.Live, title)
+	return sendSlackNotification(message)
+}
+
+func handleInvoiceEvent(event Event, title string) error {
+	var data InvoiceData
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		return fmt.Errorf("failed to parse invoice data: %w", err)
+	}
+
+	message := formatInvoiceMessage(data, event.Live, title)
 	return sendSlackNotification(message)
 }
 
@@ -402,6 +424,35 @@ func formatReturnMessage(data ReturnData, live bool) SlackMessage {
 		data.TotalDisplay,
 		data.Reason,
 	)
+
+	return SlackMessage{Text: text}
+}
+
+func formatInvoiceMessage(data InvoiceData, live bool, title string) SlackMessage {
+	text := fmt.Sprintf(":page_facing_up: %s\n\nCustomer: %s %s (%s)",
+		title,
+		data.Contact.First,
+		data.Contact.Last,
+		data.Contact.Email,
+	)
+
+	if data.Contact.Company != "" {
+		text += fmt.Sprintf("\nCompany: %s", data.Contact.Company)
+	}
+
+	text += fmt.Sprintf("\nOrder: %s\nDue: %s\nAmount: %s",
+		data.OrderReference,
+		data.DueDate,
+		formatAnyAmount(data.Subtotal, data.Currency),
+	)
+
+	// Add items
+	if len(data.Items) > 0 {
+		text += "\n\nItems:"
+		for _, item := range data.Items {
+			text += fmt.Sprintf("\n• %s (x%v)", item.Display, item.Quantity)
+		}
+	}
 
 	return SlackMessage{Text: text}
 }
