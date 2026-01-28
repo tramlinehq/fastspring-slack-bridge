@@ -67,6 +67,18 @@ type SubscriptionData struct {
 	EndDate      string   `json:"end"`
 }
 
+type SubscriptionChargeData struct {
+	Order            string `json:"order"`
+	Subscription     string `json:"subscription"`
+	Account          string `json:"account"`
+	Quote            string `json:"quote"`
+	Currency         string `json:"currency"`
+	Total            any    `json:"total"`
+	Status           string `json:"status"`
+	Sequence         int    `json:"sequence"`
+	TimestampDisplay string `json:"timestampDisplay"`
+}
+
 type ReturnData struct {
 	ID           string   `json:"id"`
 	OrderID      string   `json:"order"`
@@ -292,7 +304,7 @@ func handleSubscriptionEvent(event Event, title string, severity string) error {
 }
 
 func handleSubscriptionChargeEvent(event Event, title string, severity string) error {
-	var data SubscriptionData
+	var data SubscriptionChargeData
 	if err := json.Unmarshal(event.Data, &data); err != nil {
 		return fmt.Errorf("failed to parse subscription charge data: %w", err)
 	}
@@ -395,21 +407,20 @@ func formatSubscriptionMessage(data SubscriptionData, live bool, title string, s
 	return SlackMessage{Text: text}
 }
 
-func formatSubscriptionChargeMessage(data SubscriptionData, live bool, title string, severity string) SlackMessage {
+func formatSubscriptionChargeMessage(data SubscriptionChargeData, live bool, title string, severity string) SlackMessage {
 	emoji := severityEmoji(severity)
 
-	text := fmt.Sprintf(":%s: %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nAmount: %s",
+	text := fmt.Sprintf(":%s: %s\n\nSubscription: %s\nOrder: %s\nAmount: %s\nPayment #%d",
 		emoji,
 		title,
-		data.Customer.First,
-		data.Customer.Last,
-		data.Customer.Email,
 		data.Subscription,
-		data.TotalDisplay,
+		data.Order,
+		formatAnyAmount(data.Total, data.Currency),
+		data.Sequence,
 	)
 
-	if data.NextDate != "" {
-		text += fmt.Sprintf("\nNext billing: %s", data.NextDate)
+	if data.Status != "" {
+		text += fmt.Sprintf("\nStatus: %s", data.Status)
 	}
 
 	return SlackMessage{Text: text}
