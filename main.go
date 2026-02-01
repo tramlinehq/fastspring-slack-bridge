@@ -75,6 +75,7 @@ type SubscriptionChargeData struct {
 	Currency         string `json:"currency"`
 	Total            any    `json:"total"`
 	Status           string `json:"status"`
+	Reason           string `json:"reason"`
 	Sequence         int    `json:"sequence"`
 	TimestampDisplay string `json:"timestampDisplay"`
 }
@@ -410,17 +411,23 @@ func formatSubscriptionMessage(data SubscriptionData, live bool, title string, s
 func formatSubscriptionChargeMessage(data SubscriptionChargeData, live bool, title string, severity string) SlackMessage {
 	emoji := severityEmoji(severity)
 
-	text := fmt.Sprintf(":%s: %s\n\nSubscription: %s\nOrder: %s\nAmount: %s\nPayment #%d",
+	text := fmt.Sprintf(":%s: %s\n\nSubscription: %s",
 		emoji,
 		title,
 		data.Subscription,
-		data.Order,
-		formatAnyAmount(data.Total, data.Currency),
-		data.Sequence,
 	)
 
-	if data.Status != "" {
-		text += fmt.Sprintf("\nStatus: %s", data.Status)
+	if data.Order != "" {
+		text += fmt.Sprintf("\nOrder: %s", data.Order)
+	}
+	if data.Total != nil {
+		text += fmt.Sprintf("\nAmount: %s", formatAnyAmount(data.Total, data.Currency))
+	}
+	if data.Sequence > 0 {
+		text += fmt.Sprintf("\nPayment #%d", data.Sequence)
+	}
+	if data.Reason != "" {
+		text += fmt.Sprintf("\nReason: %s", data.Reason)
 	}
 
 	return SlackMessage{Text: text}
