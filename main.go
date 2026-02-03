@@ -630,12 +630,13 @@ func fastspringAPIRequest(method, path string, body io.Reader) (*http.Response, 
 	return client.Do(req)
 }
 
-func fetchAllActiveSubscriptions() ([]SubscriptionDetail, error) {
+func fetchAllSubscriptions() ([]SubscriptionDetail, error) {
 	var allSubs []SubscriptionDetail
 	page := 1
 
 	for {
-		path := fmt.Sprintf("/subscriptions?status=active&scope=live&page=%d&limit=50", page)
+		// Fetch all subscriptions (active, canceled, deactivated, etc.)
+		path := fmt.Sprintf("/subscriptions?scope=live&page=%d&limit=50", page)
 		resp, err := fastspringAPIRequest("GET", path, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to list subscriptions page %d: %w", page, err)
@@ -731,8 +732,8 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Starting weekly payment digest generation")
 
-	// 1. Fetch all active subscriptions (includes details)
-	subscriptions, err := fetchAllActiveSubscriptions()
+	// 1. Fetch all subscriptions (includes details)
+	subscriptions, err := fetchAllSubscriptions()
 	if err != nil {
 		log.Printf("Error fetching subscriptions: %v", err)
 		sendErrorNotification("Digest: failed to fetch subscriptions", err.Error())
@@ -740,10 +741,10 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Found %d active subscriptions", len(subscriptions))
+	log.Printf("Found %d subscriptions", len(subscriptions))
 
 	if len(subscriptions) == 0 {
-		log.Printf("No active subscriptions found, skipping digest")
+		log.Printf("No subscriptions found, skipping digest")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("no active subscriptions"))
 		return
