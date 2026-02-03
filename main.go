@@ -731,6 +731,60 @@ func getStringField(m map[string]any, key string) string {
 	return ""
 }
 
+// Extract total/currency from entry's nested order object
+func getEntryTotal(e SubscriptionEntry) string {
+	if order, ok := e.Order.(map[string]any); ok {
+		if totalDisplay, ok := order["totalDisplay"].(string); ok && totalDisplay != "" {
+			return totalDisplay
+		}
+		if total, ok := order["total"].(float64); ok {
+			currency := ""
+			if c, ok := order["currency"].(string); ok {
+				currency = c
+			}
+			return formatAnyAmount(total, currency)
+		}
+	}
+	// Fallback to entry-level fields
+	if e.TotalDisplay != "" {
+		return e.TotalDisplay
+	}
+	return formatAnyAmount(e.Total, e.Currency)
+}
+
+func getEntryCompleted(e SubscriptionEntry) bool {
+	if order, ok := e.Order.(map[string]any); ok {
+		if completed, ok := order["completed"].(bool); ok {
+			return completed
+		}
+	}
+	return e.Completed
+}
+
+func getEntryCustomer(e SubscriptionEntry) AccountContact {
+	if order, ok := e.Order.(map[string]any); ok {
+		if customer, ok := order["customer"].(map[string]any); ok {
+			return AccountContact{
+				First:   getStringField(customer, "first"),
+				Last:    getStringField(customer, "last"),
+				Email:   getStringField(customer, "email"),
+				Company: getStringField(customer, "company"),
+				Phone:   getStringField(customer, "phone"),
+			}
+		}
+	}
+	return AccountContact{}
+}
+
+func getEntryAccountID(e SubscriptionEntry) string {
+	if order, ok := e.Order.(map[string]any); ok {
+		if account, ok := order["account"].(string); ok {
+			return account
+		}
+	}
+	return ""
+}
+
 func digestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -786,16 +840,25 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 	customerMap := make(map[string]*CustomerDigest)
 	var customerOrder []string
 	for _, s := range allSubs {
+		// Try to get account ID from subscription, then from first entry's order
 		accountID := getAccountID(s.Detail.Account)
+		if accountID == "" && len(s.Entries) > 0 {
+			accountID = getEntryAccountID(s.Entries[0])
+		}
 		if accountID == "" {
 			accountID = s.Detail.ID // fallback to subscription ID
 		}
 
 		cd, exists := customerMap[accountID]
 		if !exists {
+			// Try to get contact from subscription, then from first entry's order
+			contact := getAccountContact(s.Detail.Account)
+			if contact.Email == "" && len(s.Entries) > 0 {
+				contact = getEntryCustomer(s.Entries[0])
+			}
 			cd = &CustomerDigest{
 				AccountID: accountID,
-				Contact:   getAccountContact(s.Detail.Account),
+				Contact:   contact,
 			}
 			customerMap[accountID] = cd
 			customerOrder = append(customerOrder, accountID)
@@ -895,14 +958,11 @@ func formatCustomerSection(cd *CustomerDigest) string {
 
 		for _, e := range sub.Entries {
 			status := ":white_check_mark:"
-			if !e.Completed {
+			if !getEntryCompleted(e) {
 				status = ":hourglass_flowing_sand:"
 			}
 
-			amount := e.TotalDisplay
-			if amount == "" {
-				amount = formatAnyAmount(e.Total, e.Currency)
-			}
+			amount := getEntryTotal(e)
 
 			date := e.ChangedDisplay
 			if date == "" {
