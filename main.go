@@ -648,11 +648,15 @@ func fetchAllSubscriptions() ([]SubscriptionDetail, error) {
 			return nil, fmt.Errorf("subscriptions list returned %d: %s", resp.StatusCode, string(body))
 		}
 
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("Subscriptions API response (page %d): %s", page, string(bodyBytes))
+
 		var result SubscriptionListResponse
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		if err := json.Unmarshal(bodyBytes, &result); err != nil {
 			return nil, fmt.Errorf("failed to decode subscriptions list: %w", err)
 		}
 
+		log.Printf("Parsed %d subscriptions from page %d", len(result.Subscriptions), page)
 		allSubs = append(allSubs, result.Subscriptions...)
 
 		if result.NextPage == nil || *result.NextPage == 0 {
