@@ -681,8 +681,11 @@ func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error
 		return nil, fmt.Errorf("entries for %s returned %d: %s", subscriptionID, resp.StatusCode, string(body))
 	}
 
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	log.Printf("Entries API response for %s: %s", subscriptionID, string(bodyBytes))
+
 	var entries []SubscriptionEntry
-	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+	if err := json.Unmarshal(bodyBytes, &entries); err != nil {
 		return nil, fmt.Errorf("failed to decode entries for %s: %w", subscriptionID, err)
 	}
 
