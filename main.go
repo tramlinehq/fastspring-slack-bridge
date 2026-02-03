@@ -162,7 +162,7 @@ type SubscriptionEntry struct {
 	ID              string `json:"id"`
 	BeginPeriodDate string `json:"beginPeriodDate"`
 	EndPeriodDate   string `json:"endPeriodDate"`
-	Order           string `json:"order"`
+	Order           any    `json:"order"` // Can be string or object
 	Reference       string `json:"reference"`
 	Completed       bool   `json:"completed"`
 	ChangedDisplay  string `json:"changedDisplay"`
