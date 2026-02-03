@@ -668,6 +668,54 @@ func fetchAllSubscriptions() ([]SubscriptionDetail, error) {
 	return allSubs, nil
 }
 
+type QuoteListResponse struct {
+	Action string         `json:"action"`
+	Result string         `json:"result"`
+	Quotes []QuoteAPIData `json:"quotes"`
+}
+
+type QuoteAPIData struct {
+	ID            string  `json:"id"`
+	Quote         string  `json:"quote"`
+	Name          string  `json:"name"`
+	Status        string  `json:"status"`
+	Currency      string  `json:"currency"`
+	Total         any     `json:"total"`
+	TotalDisplay  string  `json:"totalDisplay"`
+	Created       string  `json:"created"`
+	Expires       string  `json:"expires"`
+	Recipient     any     `json:"recipient"`
+	QuoteUrl      string  `json:"quoteUrl"`
+}
+
+func fetchRecentQuotes() ([]QuoteAPIData, error) {
+	// Fetch quotes from the last 30 days
+	now := time.Now()
+	begin := now.AddDate(0, -1, 0).Format("2006-01-02")
+
+	path := fmt.Sprintf("/quotes?begin=%s&scope=live&limit=50", begin)
+	resp, err := fastspringAPIRequest("GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch quotes: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("quotes list returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	log.Printf("Quotes API response: %s", string(bodyBytes))
+
+	var result QuoteListResponse
+	if err := json.Unmarshal(bodyBytes, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode quotes list: %w", err)
+	}
+
+	return result.Quotes, nil
+}
+
 func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error) {
 	path := fmt.Sprintf("/subscriptions/%s/entries", subscriptionID)
 	resp, err := fastspringAPIRequest("GET", path, nil)
@@ -825,9 +873,9 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Take last 5 entries
+		// Take first 5 entries (API returns most recent first)
 		if len(entries) > 5 {
-			entries = entries[len(entries)-5:]
+			entries = entries[:5]
 		}
 
 		allSubs = append(allSubs, subWithEntries{Detail: sub, Entries: entries})
@@ -878,8 +926,17 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// 4. Fetch recent quotes
+	quotes, err := fetchRecentQuotes()
+	if err != nil {
+		log.Printf("Error fetching quotes: %v", err)
+		// Don't fail the whole digest, just log and continue
+		quotes = nil
+	}
+	log.Printf("Found %d recent quotes", len(quotes))
+
 	// 5. Format and send Slack message
-	if err := sendDigestToSlack(customerMap, customerOrder); err != nil {
+	if err := sendDigestToSlack(customerMap, customerOrder, quotes); err != nil {
 		log.Printf("Error sending digest to Slack: %v", err)
 		sendErrorNotification("Digest: failed to send to Slack", err.Error())
 		http.Error(w, "Failed to send digest", http.StatusInternalServerError)
@@ -892,15 +949,15 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("digest sent"))
 }
 
-func sendDigestToSlack(customers map[string]*CustomerDigest, order []string) error {
-	message := formatDigestMessage(customers, order)
+func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quotes []QuoteAPIData) error {
+	message := formatDigestMessage(customers, order, quotes)
 
 	if len(message.Text) <= 3500 {
 		return sendSlackNotification(message)
 	}
 
 	// Split into multiple messages if too long
-	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n*%d customers* with active subscriptions",
+	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions",
 		time.Now().Format("Jan 2, 2006"), len(customers))
 	if err := sendSlackNotification(SlackMessage{Text: header}); err != nil {
 		return err
@@ -914,17 +971,30 @@ func sendDigestToSlack(customers map[string]*CustomerDigest, order []string) err
 		}
 	}
 
+	// Send quotes section if any
+	if len(quotes) > 0 {
+		quotesMsg := formatQuotesSection(quotes)
+		if err := sendSlackNotification(SlackMessage{Text: quotesMsg}); err != nil {
+			log.Printf("Failed to send quotes section: %v", err)
+		}
+	}
+
 	return nil
 }
 
-func formatDigestMessage(customers map[string]*CustomerDigest, order []string) SlackMessage {
+func formatDigestMessage(customers map[string]*CustomerDigest, order []string, quotes []QuoteAPIData) SlackMessage {
 	now := time.Now()
-	text := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n*%d customers* with active subscriptions\n",
+	text := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions\n",
 		now.Format("Jan 2, 2006"), len(customers))
 
 	for _, accountID := range order {
 		cd := customers[accountID]
 		text += "\n" + formatCustomerSection(cd)
+	}
+
+	// Add quotes section
+	if len(quotes) > 0 {
+		text += "\n\n" + formatQuotesSection(quotes)
 	}
 
 	return SlackMessage{Text: text}
@@ -940,19 +1010,19 @@ func formatCustomerSection(cd *CustomerDigest) string {
 		name = cd.Contact.Email
 	}
 
-	section := fmt.Sprintf("———\n:bust_in_silhouette: *%s*", name)
+	section := fmt.Sprintf(":bust_in_silhouette: *%s*", name)
 	if cd.Contact.Company != "" {
 		section += fmt.Sprintf(" (%s)", cd.Contact.Company)
 	}
 	if cd.Contact.Email != "" {
-		section += fmt.Sprintf(" — %s", cd.Contact.Email)
+		section += fmt.Sprintf("\n      %s", cd.Contact.Email)
 	}
 
 	for _, sub := range cd.Subs {
-		section += fmt.Sprintf("\n  :package: *%s* (`%s`)", sub.Display, sub.SubscriptionID)
+		section += fmt.Sprintf("\n\n      :package: %s", sub.Display)
 
 		if len(sub.Entries) == 0 {
-			section += "\n    _No payment entries_"
+			section += "\n            _No payment entries_"
 			continue
 		}
 
@@ -969,8 +1039,53 @@ func formatCustomerSection(cd *CustomerDigest) string {
 				date = e.BeginPeriodDate
 			}
 
-			section += fmt.Sprintf("\n    %s %s — %s", status, date, amount)
+			section += fmt.Sprintf("\n            %s  %s  •  %s", status, date, amount)
 		}
+	}
+
+	return section
+}
+
+func formatQuotesSection(quotes []QuoteAPIData) string {
+	section := ":memo: *Recent Quotes* (last 30 days)\n"
+
+	for _, q := range quotes {
+		statusEmoji := ":hourglass_flowing_sand:"
+		switch strings.ToUpper(q.Status) {
+		case "OPEN":
+			statusEmoji = ":hourglass_flowing_sand:"
+		case "ACCEPTED":
+			statusEmoji = ":white_check_mark:"
+		case "CANCELED", "EXPIRED":
+			statusEmoji = ":x:"
+		}
+
+		name := q.Name
+		if name == "" {
+			name = q.Quote
+		}
+
+		total := q.TotalDisplay
+		if total == "" {
+			total = formatAnyAmount(q.Total, q.Currency)
+		}
+
+		// Get recipient info
+		recipientName := ""
+		if recipient, ok := q.Recipient.(map[string]any); ok {
+			first := getStringField(recipient, "first")
+			last := getStringField(recipient, "last")
+			recipientName = strings.TrimSpace(first + " " + last)
+			if recipientName == "" {
+				recipientName = getStringField(recipient, "email")
+			}
+		}
+
+		section += fmt.Sprintf("\n%s  *%s*  •  %s", statusEmoji, name, total)
+		if recipientName != "" {
+			section += fmt.Sprintf("  •  %s", recipientName)
+		}
+		section += fmt.Sprintf("  •  _%s_", q.Status)
 	}
 
 	return section
