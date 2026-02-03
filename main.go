@@ -649,14 +649,13 @@ func fetchAllSubscriptions() ([]SubscriptionDetail, error) {
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("Subscriptions API response (page %d): %s", page, string(bodyBytes))
 
 		var result SubscriptionListResponse
 		if err := json.Unmarshal(bodyBytes, &result); err != nil {
 			return nil, fmt.Errorf("failed to decode subscriptions list: %w", err)
 		}
 
-		log.Printf("Parsed %d subscriptions from page %d", len(result.Subscriptions), page)
+		log.Printf("Fetched %d subscriptions from page %d", len(result.Subscriptions), page)
 		allSubs = append(allSubs, result.Subscriptions...)
 
 		if result.NextPage == nil || *result.NextPage == 0 {
@@ -706,13 +705,13 @@ func fetchRecentQuotes() ([]QuoteAPIData, error) {
 	}
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Printf("Quotes API response: %s", string(bodyBytes))
 
 	var result QuoteListResponse
 	if err := json.Unmarshal(bodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode quotes list: %w", err)
 	}
 
+	log.Printf("Fetched %d quotes", len(result.Quotes))
 	return result.Quotes, nil
 }
 
@@ -730,7 +729,6 @@ func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error
 	}
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	log.Printf("Entries API response for %s: %s", subscriptionID, string(bodyBytes))
 
 	var entries []SubscriptionEntry
 	if err := json.Unmarshal(bodyBytes, &entries); err != nil {
