@@ -833,6 +833,56 @@ func getEntryAccountID(e SubscriptionEntry) string {
 	return ""
 }
 
+func getEntryInvoiceUrl(e SubscriptionEntry) string {
+	if order, ok := e.Order.(map[string]any); ok {
+		if url, ok := order["invoiceUrl"].(string); ok {
+			return url
+		}
+	}
+	return ""
+}
+
+func getEntryDate(e SubscriptionEntry) string {
+	if order, ok := e.Order.(map[string]any); ok {
+		// Prefer the ISO date for consistent comparison
+		if date, ok := order["changedDisplayISO8601"].(string); ok && date != "" {
+			return date
+		}
+		if date, ok := order["changedDisplay"].(string); ok && date != "" {
+			return date
+		}
+	}
+	if e.ChangedDisplay != "" {
+		return e.ChangedDisplay
+	}
+	return e.BeginPeriodDate
+}
+
+// deduplicateEntries removes pending entries if there's a completed entry for the same date
+func deduplicateEntries(entries []SubscriptionEntry) []SubscriptionEntry {
+	// First pass: collect dates that have completed entries
+	completedDates := make(map[string]bool)
+	for _, e := range entries {
+		if getEntryCompleted(e) {
+			date := getEntryDate(e)
+			completedDates[date] = true
+		}
+	}
+
+	// Second pass: filter out pending entries for dates that have completed ones
+	var result []SubscriptionEntry
+	for _, e := range entries {
+		date := getEntryDate(e)
+		if !getEntryCompleted(e) && completedDates[date] {
+			// Skip this pending entry - there's a completed one for the same date
+			continue
+		}
+		result = append(result, e)
+	}
+
+	return result
+}
+
 func digestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1026,20 +1076,24 @@ func formatCustomerSection(cd *CustomerDigest) string {
 			continue
 		}
 
-		for _, e := range sub.Entries {
+		// Deduplicate: remove pending entries if completed exists for same date
+		entries := deduplicateEntries(sub.Entries)
+
+		for _, e := range entries {
 			status := ":white_check_mark:"
 			if !getEntryCompleted(e) {
 				status = ":hourglass_flowing_sand:"
 			}
 
 			amount := getEntryTotal(e)
+			date := getEntryDate(e)
+			invoiceUrl := getEntryInvoiceUrl(e)
 
-			date := e.ChangedDisplay
-			if date == "" {
-				date = e.BeginPeriodDate
+			if invoiceUrl != "" {
+				section += fmt.Sprintf("\n            %s  <%s|%s>  •  %s", status, invoiceUrl, date, amount)
+			} else {
+				section += fmt.Sprintf("\n            %s  %s  •  %s", status, date, amount)
 			}
-
-			section += fmt.Sprintf("\n            %s  %s  •  %s", status, date, amount)
 		}
 	}
 
