@@ -119,6 +119,83 @@ type QuoteData struct {
 	Items          []Item   `json:"items"`
 }
 
+// Fastspring API response types (for digest)
+
+type SubscriptionListResponse struct {
+	Action        string   `json:"action"`
+	Result        string   `json:"result"`
+	NextPage      *int     `json:"nextPage"`
+	Subscriptions []string `json:"subscriptions"`
+}
+
+type SubscriptionDetailResponse struct {
+	Action        string               `json:"action"`
+	Result        string               `json:"result"`
+	Subscriptions []SubscriptionDetail `json:"subscriptions"`
+}
+
+type SubscriptionDetail struct {
+	ID           string              `json:"id"`
+	Subscription string              `json:"subscription"`
+	Active       bool                `json:"active"`
+	State        string              `json:"state"`
+	Product      string              `json:"product"`
+	Display      string              `json:"display"`
+	Currency     string              `json:"currency"`
+	Price        any                 `json:"price"`
+	Quantity     any                 `json:"quantity"`
+	Account      SubscriptionAccount `json:"account"`
+	Begin        any                 `json:"begin"`
+	BeginDisplay string              `json:"beginDisplay"`
+	Live         bool                `json:"live"`
+}
+
+type SubscriptionAccount struct {
+	ID      string         `json:"id"`
+	Account string         `json:"account"`
+	Contact AccountContact `json:"contact"`
+}
+
+type AccountContact struct {
+	First   string `json:"first"`
+	Last    string `json:"last"`
+	Email   string `json:"email"`
+	Company string `json:"company"`
+	Phone   string `json:"phone"`
+}
+
+type SubscriptionEntry struct {
+	ID              string `json:"id"`
+	BeginPeriodDate string `json:"beginPeriodDate"`
+	EndPeriodDate   string `json:"endPeriodDate"`
+	Order           string `json:"order"`
+	Reference       string `json:"reference"`
+	Completed       bool   `json:"completed"`
+	ChangedDisplay  string `json:"changedDisplay"`
+	Live            bool   `json:"live"`
+	Currency        string `json:"currency"`
+	Total           any    `json:"total"`
+	TotalDisplay    string `json:"totalDisplay"`
+	Subtotal        any    `json:"subtotal"`
+	SubtotalDisplay string `json:"subtotalDisplay"`
+	Tax             any    `json:"tax"`
+	TaxDisplay      string `json:"taxDisplay"`
+}
+
+type CustomerDigest struct {
+	AccountID string
+	Contact   AccountContact
+	Subs      []SubDigest
+}
+
+type SubDigest struct {
+	SubscriptionID string
+	Product        string
+	Display        string
+	Currency       string
+	Entries        []SubscriptionEntry
+}
+
 type SlackMessage struct {
 	Text   string  `json:"text,omitempty"`
 	Blocks []Block `json:"blocks,omitempty"`
@@ -142,6 +219,7 @@ func main() {
 
 	http.HandleFunc("/", healthHandler)
 	http.HandleFunc("/webhooks/fastspring", webhookHandler)
+	http.HandleFunc("/digest", digestHandler)
 
 	log.Printf("Starting server on port %s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
@@ -533,6 +611,323 @@ func formatAnyAmount(amount any, currency string) string {
 		}
 		return fmt.Sprintf("%v", amount)
 	}
+}
+
+// Fastspring API client
+
+func fastspringAPIRequest(method, path string, body io.Reader) (*http.Response, error) {
+	username := os.Getenv("FASTSPRING_API_USERNAME")
+	password := os.Getenv("FASTSPRING_API_PASSWORD")
+
+	url := "https://api.fastspring.com" + path
+
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.SetBasicAuth(username, password)
+	req.Header.Set("User-Agent", "fastspring-slack-bridge/1.0")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	return client.Do(req)
+}
+
+func fetchAllActiveSubscriptionIDs() ([]string, error) {
+	var allIDs []string
+	page := 1
+
+	for {
+		path := fmt.Sprintf("/subscriptions?status=active&scope=live&page=%d&limit=50", page)
+		resp, err := fastspringAPIRequest("GET", path, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list subscriptions page %d: %w", page, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("subscriptions list returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		var result SubscriptionListResponse
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, fmt.Errorf("failed to decode subscriptions list: %w", err)
+		}
+
+		allIDs = append(allIDs, result.Subscriptions...)
+
+		if result.NextPage == nil || *result.NextPage == 0 {
+			break
+		}
+		page = *result.NextPage
+	}
+
+	return allIDs, nil
+}
+
+func fetchSubscriptionDetails(ids []string) ([]SubscriptionDetail, error) {
+	payload, err := json.Marshal(ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal subscription IDs: %w", err)
+	}
+
+	resp, err := fastspringAPIRequest("POST", "/subscriptions", bytes.NewBuffer(payload))
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch subscription details: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("subscription details returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result SubscriptionDetailResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode subscription details: %w", err)
+	}
+
+	return result.Subscriptions, nil
+}
+
+func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error) {
+	path := fmt.Sprintf("/subscriptions/%s/entries", subscriptionID)
+	resp, err := fastspringAPIRequest("GET", path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch entries for %s: %w", subscriptionID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("entries for %s returned %d: %s", subscriptionID, resp.StatusCode, string(body))
+	}
+
+	var entries []SubscriptionEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entries); err != nil {
+		return nil, fmt.Errorf("failed to decode entries for %s: %w", subscriptionID, err)
+	}
+
+	return entries, nil
+}
+
+// Weekly digest
+
+func digestHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	log.Printf("Starting weekly payment digest generation")
+
+	// 1. Fetch all active subscription IDs
+	subIDs, err := fetchAllActiveSubscriptionIDs()
+	if err != nil {
+		log.Printf("Error fetching subscription IDs: %v", err)
+		sendErrorNotification("Digest: failed to fetch subscriptions", err.Error())
+		http.Error(w, "Failed to fetch subscriptions", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Found %d active subscriptions", len(subIDs))
+
+	if len(subIDs) == 0 {
+		log.Printf("No active subscriptions found, skipping digest")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("no active subscriptions"))
+		return
+	}
+
+	// 2. Fetch subscription details in batches of 50
+	detailMap := make(map[string]SubscriptionDetail)
+	for i := 0; i < len(subIDs); i += 50 {
+		end := i + 50
+		if end > len(subIDs) {
+			end = len(subIDs)
+		}
+		batch := subIDs[i:end]
+
+		details, err := fetchSubscriptionDetails(batch)
+		if err != nil {
+			log.Printf("Error fetching subscription details batch %d-%d: %v", i, end, err)
+			sendErrorNotification("Digest: failed to fetch subscription details", err.Error())
+			http.Error(w, "Failed to fetch subscription details", http.StatusInternalServerError)
+			return
+		}
+
+		for _, d := range details {
+			detailMap[d.ID] = d
+		}
+	}
+
+	// 3. Fetch entries for each subscription
+	type subWithEntries struct {
+		Detail  SubscriptionDetail
+		Entries []SubscriptionEntry
+	}
+	var allSubs []subWithEntries
+
+	for _, id := range subIDs {
+		entries, err := fetchSubscriptionEntries(id)
+		if err != nil {
+			log.Printf("Error fetching entries for %s: %v", id, err)
+			continue
+		}
+
+		// Take last 5 entries
+		if len(entries) > 5 {
+			entries = entries[len(entries)-5:]
+		}
+
+		detail, ok := detailMap[id]
+		if !ok {
+			log.Printf("No detail found for subscription %s, skipping", id)
+			continue
+		}
+
+		allSubs = append(allSubs, subWithEntries{Detail: detail, Entries: entries})
+
+		// Rate limiting: stay under 250 req/min
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// 4. Group by account/customer
+	customerMap := make(map[string]*CustomerDigest)
+	var customerOrder []string
+	for _, s := range allSubs {
+		accountID := s.Detail.Account.ID
+		if accountID == "" {
+			accountID = s.Detail.Account.Account
+		}
+
+		cd, exists := customerMap[accountID]
+		if !exists {
+			cd = &CustomerDigest{
+				AccountID: accountID,
+				Contact:   s.Detail.Account.Contact,
+			}
+			customerMap[accountID] = cd
+			customerOrder = append(customerOrder, accountID)
+		}
+
+		productName := s.Detail.Display
+		if productName == "" {
+			productName = s.Detail.Product
+		}
+
+		cd.Subs = append(cd.Subs, SubDigest{
+			SubscriptionID: s.Detail.ID,
+			Product:        s.Detail.Product,
+			Display:        productName,
+			Currency:       s.Detail.Currency,
+			Entries:        s.Entries,
+		})
+	}
+
+	// 5. Format and send Slack message
+	if err := sendDigestToSlack(customerMap, customerOrder); err != nil {
+		log.Printf("Error sending digest to Slack: %v", err)
+		sendErrorNotification("Digest: failed to send to Slack", err.Error())
+		http.Error(w, "Failed to send digest", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Weekly digest sent successfully (%d customers, %d subscriptions)",
+		len(customerMap), len(allSubs))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("digest sent"))
+}
+
+func sendDigestToSlack(customers map[string]*CustomerDigest, order []string) error {
+	message := formatDigestMessage(customers, order)
+
+	if len(message.Text) <= 3500 {
+		return sendSlackNotification(message)
+	}
+
+	// Split into multiple messages if too long
+	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n*%d customers* with active subscriptions",
+		time.Now().Format("Jan 2, 2006"), len(customers))
+	if err := sendSlackNotification(SlackMessage{Text: header}); err != nil {
+		return err
+	}
+
+	for _, accountID := range order {
+		cd := customers[accountID]
+		msg := formatCustomerDigestMessage(cd)
+		if err := sendSlackNotification(msg); err != nil {
+			log.Printf("Failed to send digest for customer %s: %v", cd.AccountID, err)
+		}
+	}
+
+	return nil
+}
+
+func formatDigestMessage(customers map[string]*CustomerDigest, order []string) SlackMessage {
+	now := time.Now()
+	text := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n*%d customers* with active subscriptions\n",
+		now.Format("Jan 2, 2006"), len(customers))
+
+	for _, accountID := range order {
+		cd := customers[accountID]
+		text += "\n" + formatCustomerSection(cd)
+	}
+
+	return SlackMessage{Text: text}
+}
+
+func formatCustomerDigestMessage(cd *CustomerDigest) SlackMessage {
+	return SlackMessage{Text: formatCustomerSection(cd)}
+}
+
+func formatCustomerSection(cd *CustomerDigest) string {
+	name := strings.TrimSpace(cd.Contact.First + " " + cd.Contact.Last)
+	if name == "" {
+		name = cd.Contact.Email
+	}
+
+	section := fmt.Sprintf("———\n:bust_in_silhouette: *%s*", name)
+	if cd.Contact.Company != "" {
+		section += fmt.Sprintf(" (%s)", cd.Contact.Company)
+	}
+	if cd.Contact.Email != "" {
+		section += fmt.Sprintf(" — %s", cd.Contact.Email)
+	}
+
+	for _, sub := range cd.Subs {
+		section += fmt.Sprintf("\n  :package: *%s* (`%s`)", sub.Display, sub.SubscriptionID)
+
+		if len(sub.Entries) == 0 {
+			section += "\n    _No payment entries_"
+			continue
+		}
+
+		for _, e := range sub.Entries {
+			status := ":white_check_mark:"
+			if !e.Completed {
+				status = ":hourglass_flowing_sand:"
+			}
+
+			amount := e.TotalDisplay
+			if amount == "" {
+				amount = formatAnyAmount(e.Total, e.Currency)
+			}
+
+			date := e.ChangedDisplay
+			if date == "" {
+				date = e.BeginPeriodDate
+			}
+
+			section += fmt.Sprintf("\n    %s %s — %s", status, date, amount)
+		}
+	}
+
+	return section
 }
 
 func sendSlackNotification(message SlackMessage) error {

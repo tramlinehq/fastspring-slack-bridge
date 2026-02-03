@@ -24,3 +24,4 @@ vendor/
 # Environment
 .env
 .env.local
+fastspring-slack-bridge

@@ -54,4 +54,4 @@ jobs:
             --region europe-west3 \
             --project ${{ secrets.PROJECT_ID }} \
             --allow-unauthenticated \
-            --set-secrets "SLACK_WEBHOOK_URL=fastspring-slack-webhook:latest,FASTSPRING_HMAC_SECRET=fastspring-hmac-secret:latest"
+            --set-secrets "SLACK_WEBHOOK_URL=fastspring-slack-webhook:latest,FASTSPRING_HMAC_SECRET=fastspring-hmac-secret:latest,FASTSPRING_API_USERNAME=fastspring-api-username:latest,FASTSPRING_API_PASSWORD=fastspring-api-password:latest"
