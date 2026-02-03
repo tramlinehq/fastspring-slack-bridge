@@ -1000,30 +1000,48 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quotes []QuoteAPIData) error {
 	message := formatDigestMessage(customers, order, quotes)
 
-	if len(message.Text) <= 3500 {
+	// Slack supports up to 40,000 chars, but for readability split at ~10k
+	if len(message.Text) <= 10000 {
 		return sendSlackNotification(message)
 	}
 
-	// Split into multiple messages if too long
+	// If too long, send header + quotes first, then customers in batches
 	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions",
 		time.Now().Format("Jan 2, 2006"), len(customers))
+
+	// Add quotes to header if any
+	if len(quotes) > 0 {
+		header += "\n\n" + formatQuotesSection(quotes)
+	}
+
 	if err := sendSlackNotification(SlackMessage{Text: header}); err != nil {
 		return err
 	}
 
-	for _, accountID := range order {
+	// Send customers in batches to avoid hitting limits
+	var batch strings.Builder
+	for i, accountID := range order {
 		cd := customers[accountID]
-		msg := formatCustomerDigestMessage(cd)
-		if err := sendSlackNotification(msg); err != nil {
-			log.Printf("Failed to send digest for customer %s: %v", cd.AccountID, err)
+		section := formatCustomerSection(cd)
+
+		if batch.Len()+len(section) > 8000 {
+			// Send current batch and start new one
+			if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
+				log.Printf("Failed to send digest batch: %v", err)
+			}
+			batch.Reset()
 		}
+
+		if i > 0 && batch.Len() > 0 {
+			batch.WriteString("\n\n")
+		}
+		batch.WriteString(section)
 	}
 
-	// Send quotes section if any
-	if len(quotes) > 0 {
-		quotesMsg := formatQuotesSection(quotes)
-		if err := sendSlackNotification(SlackMessage{Text: quotesMsg}); err != nil {
-			log.Printf("Failed to send quotes section: %v", err)
+	// Send remaining batch
+	if batch.Len() > 0 {
+		if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
+			log.Printf("Failed to send final digest batch: %v", err)
 		}
 	}
 
