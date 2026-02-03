@@ -668,9 +668,9 @@ func fetchAllSubscriptions() ([]SubscriptionDetail, error) {
 }
 
 type QuoteListResponse struct {
-	Action string         `json:"action"`
-	Result string         `json:"result"`
-	Quotes []QuoteAPIData `json:"quotes"`
+	Embedded struct {
+		Quotes []QuoteAPIData `json:"quotes"`
+	} `json:"_embedded"`
 }
 
 type QuoteAPIData struct {
@@ -688,11 +688,8 @@ type QuoteAPIData struct {
 }
 
 func fetchRecentQuotes() ([]QuoteAPIData, error) {
-	// Fetch quotes from the last 30 days
-	now := time.Now()
-	begin := now.AddDate(0, -1, 0).Format("2006-01-02")
-
-	path := fmt.Sprintf("/quotes?begin=%s&scope=live&limit=50", begin)
+	// Fetch open and awaiting payment quotes
+	path := "/quotes?statuses=OPEN&statuses=AWAITING_PAYMENT"
 	resp, err := fastspringAPIRequest("GET", path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch quotes: %w", err)
@@ -711,8 +708,8 @@ func fetchRecentQuotes() ([]QuoteAPIData, error) {
 		return nil, fmt.Errorf("failed to decode quotes list: %w", err)
 	}
 
-	log.Printf("Fetched %d quotes", len(result.Quotes))
-	return result.Quotes, nil
+	log.Printf("Fetched %d quotes", len(result.Embedded.Quotes))
+	return result.Embedded.Quotes, nil
 }
 
 func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error) {
