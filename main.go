@@ -129,19 +129,19 @@ type SubscriptionListResponse struct {
 }
 
 type SubscriptionDetail struct {
-	ID           string              `json:"id"`
-	Subscription string              `json:"subscription"`
-	Active       bool                `json:"active"`
-	State        string              `json:"state"`
-	Product      string              `json:"product"`
-	Display      string              `json:"display"`
-	Currency     string              `json:"currency"`
-	Price        any                 `json:"price"`
-	Quantity     any                 `json:"quantity"`
-	Account      SubscriptionAccount `json:"account"`
-	Begin        any                 `json:"begin"`
-	BeginDisplay string              `json:"beginDisplay"`
-	Live         bool                `json:"live"`
+	ID           string `json:"id"`
+	Subscription string `json:"subscription"`
+	Active       bool   `json:"active"`
+	State        string `json:"state"`
+	Product      string `json:"product"`
+	Display      string `json:"display"`
+	Currency     string `json:"currency"`
+	Price        any    `json:"price"`
+	Quantity     any    `json:"quantity"`
+	Account      any    `json:"account"` // Can be string (ID) or object
+	Begin        any    `json:"begin"`
+	BeginDisplay string `json:"beginDisplay"`
+	Live         bool   `json:"live"`
 }
 
 type SubscriptionAccount struct {
@@ -686,6 +686,43 @@ func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error
 
 // Weekly digest
 
+func getAccountID(account any) string {
+	switch v := account.(type) {
+	case string:
+		return v
+	case map[string]any:
+		if id, ok := v["id"].(string); ok && id != "" {
+			return id
+		}
+		if acc, ok := v["account"].(string); ok {
+			return acc
+		}
+	}
+	return ""
+}
+
+func getAccountContact(account any) AccountContact {
+	if m, ok := account.(map[string]any); ok {
+		if contact, ok := m["contact"].(map[string]any); ok {
+			return AccountContact{
+				First:   getStringField(contact, "first"),
+				Last:    getStringField(contact, "last"),
+				Email:   getStringField(contact, "email"),
+				Company: getStringField(contact, "company"),
+				Phone:   getStringField(contact, "phone"),
+			}
+		}
+	}
+	return AccountContact{}
+}
+
+func getStringField(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
 func digestHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -737,20 +774,20 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 	}
 
-	// 4. Group by account/customer
+	// 3. Group by account/customer
 	customerMap := make(map[string]*CustomerDigest)
 	var customerOrder []string
 	for _, s := range allSubs {
-		accountID := s.Detail.Account.ID
+		accountID := getAccountID(s.Detail.Account)
 		if accountID == "" {
-			accountID = s.Detail.Account.Account
+			accountID = s.Detail.ID // fallback to subscription ID
 		}
 
 		cd, exists := customerMap[accountID]
 		if !exists {
 			cd = &CustomerDigest{
 				AccountID: accountID,
-				Contact:   s.Detail.Account.Contact,
+				Contact:   getAccountContact(s.Detail.Account),
 			}
 			customerMap[accountID] = cd
 			customerOrder = append(customerOrder, accountID)
