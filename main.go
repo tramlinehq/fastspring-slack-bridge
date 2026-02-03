@@ -191,8 +191,17 @@ type SubDigest struct {
 }
 
 type SlackMessage struct {
-	Text   string  `json:"text,omitempty"`
-	Blocks []Block `json:"blocks,omitempty"`
+	Text     string  `json:"text,omitempty"`
+	Blocks   []Block `json:"blocks,omitempty"`
+	Channel  string  `json:"channel,omitempty"`
+	ThreadTS string  `json:"thread_ts,omitempty"`
+}
+
+type SlackResponse struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	TS      string `json:"ts,omitempty"`
+	Channel string `json:"channel,omitempty"`
 }
 
 type Block struct {
@@ -995,14 +1004,7 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quotes []QuoteAPIData) error {
-	message := formatDigestMessage(customers, order, quotes)
-
-	// Slack supports up to 40,000 chars, but for readability split at ~10k
-	if len(message.Text) <= 10000 {
-		return sendSlackNotification(message)
-	}
-
-	// If too long, send header + quotes first, then customers in batches
+	// Send header message first (this becomes the parent for threading)
 	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions",
 		time.Now().Format("Jan 2, 2006"), len(customers))
 
@@ -1011,35 +1013,55 @@ func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quo
 		header += "\n\n" + formatQuotesSection(quotes)
 	}
 
-	if err := sendSlackNotification(SlackMessage{Text: header}); err != nil {
-		return err
+	parentTS, err := sendSlackMessage(SlackMessage{Text: header})
+	if err != nil {
+		return fmt.Errorf("failed to send header: %w", err)
 	}
 
-	// Send customers in batches to avoid hitting limits
-	var batch strings.Builder
-	for i, accountID := range order {
+	// If no threading support (no bot token), fall back to simple messages
+	if parentTS == "" {
+		// Send customers in batches without threading
+		var batch strings.Builder
+		for i, accountID := range order {
+			cd := customers[accountID]
+			section := formatCustomerSection(cd)
+
+			if batch.Len()+len(section) > 8000 {
+				if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
+					log.Printf("Failed to send digest batch: %v", err)
+				}
+				batch.Reset()
+			}
+
+			if i > 0 && batch.Len() > 0 {
+				batch.WriteString("\n\n")
+			}
+			batch.WriteString(section)
+		}
+
+		if batch.Len() > 0 {
+			if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
+				log.Printf("Failed to send final digest batch: %v", err)
+			}
+		}
+		return nil
+	}
+
+	// Send each customer as a threaded reply
+	for _, accountID := range order {
 		cd := customers[accountID]
 		section := formatCustomerSection(cd)
 
-		if batch.Len()+len(section) > 8000 {
-			// Send current batch and start new one
-			if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
-				log.Printf("Failed to send digest batch: %v", err)
-			}
-			batch.Reset()
+		_, err := sendSlackMessage(SlackMessage{
+			Text:     section,
+			ThreadTS: parentTS,
+		})
+		if err != nil {
+			log.Printf("Failed to send threaded message for %s: %v", accountID, err)
 		}
 
-		if i > 0 && batch.Len() > 0 {
-			batch.WriteString("\n\n")
-		}
-		batch.WriteString(section)
-	}
-
-	// Send remaining batch
-	if batch.Len() > 0 {
-		if err := sendSlackNotification(SlackMessage{Text: batch.String()}); err != nil {
-			log.Printf("Failed to send final digest batch: %v", err)
-		}
+		// Small delay to avoid rate limits
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	return nil
@@ -1156,6 +1178,53 @@ func formatQuotesSection(quotes []QuoteAPIData) string {
 	}
 
 	return section
+}
+
+// sendSlackMessage sends a message and returns the timestamp (for threading)
+func sendSlackMessage(message SlackMessage) (string, error) {
+	botToken := os.Getenv("SLACK_BOT_TOKEN")
+	channel := os.Getenv("SLACK_CHANNEL_ID")
+
+	// If bot token is configured, use Web API for threading support
+	if botToken != "" && channel != "" {
+		message.Channel = channel
+
+		payload, err := json.Marshal(message)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal slack message: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", "https://slack.com/api/chat.postMessage", bytes.NewBuffer(payload))
+		if err != nil {
+			return "", fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+botToken)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("failed to send slack message: %w", err)
+		}
+		defer resp.Body.Close()
+
+		var slackResp SlackResponse
+		if err := json.NewDecoder(resp.Body).Decode(&slackResp); err != nil {
+			return "", fmt.Errorf("failed to decode slack response: %w", err)
+		}
+
+		if !slackResp.OK {
+			return "", fmt.Errorf("slack API error: %s", slackResp.Error)
+		}
+
+		log.Printf("Slack message sent successfully (ts: %s)", slackResp.TS)
+		return slackResp.TS, nil
+	}
+
+	// Fall back to webhook (no threading support)
+	err := sendSlackNotification(message)
+	return "", err
 }
 
 func sendSlackNotification(message SlackMessage) error {
