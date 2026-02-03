@@ -1005,13 +1005,8 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 
 func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quotes []QuoteAPIData) error {
 	// Send header message first (this becomes the parent for threading)
-	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions",
-		time.Now().Format("Jan 2, 2006"), len(customers))
-
-	// Add quotes to header if any
-	if len(quotes) > 0 {
-		header += "\n\n" + formatQuotesSection(quotes)
-	}
+	header := fmt.Sprintf(":bar_chart: *Weekly Payment Digest* — %s\n\n*%d customers* with subscriptions  •  *%d open quotes*",
+		time.Now().Format("Jan 2, 2006"), len(customers), len(quotes))
 
 	parentTS, err := sendSlackMessage(SlackMessage{Text: header})
 	if err != nil {
@@ -1044,6 +1039,13 @@ func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quo
 				log.Printf("Failed to send final digest batch: %v", err)
 			}
 		}
+
+		// Send quotes in a separate message
+		if len(quotes) > 0 {
+			if err := sendSlackNotification(SlackMessage{Text: formatQuotesSection(quotes)}); err != nil {
+				log.Printf("Failed to send quotes batch: %v", err)
+			}
+		}
 		return nil
 	}
 
@@ -1058,6 +1060,22 @@ func sendDigestToSlack(customers map[string]*CustomerDigest, order []string, quo
 		})
 		if err != nil {
 			log.Printf("Failed to send threaded message for %s: %v", accountID, err)
+		}
+
+		// Small delay to avoid rate limits
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// Send each quote as a threaded reply
+	for _, q := range quotes {
+		section := formatQuoteSection(q)
+
+		_, err := sendSlackMessage(SlackMessage{
+			Text:     section,
+			ThreadTS: parentTS,
+		})
+		if err != nil {
+			log.Printf("Failed to send threaded message for quote %s: %v", q.Quote, err)
 		}
 
 		// Small delay to avoid rate limits
@@ -1136,45 +1154,73 @@ func formatCustomerSection(cd *CustomerDigest) string {
 }
 
 func formatQuotesSection(quotes []QuoteAPIData) string {
-	section := ":memo: *Recent Quotes* (last 30 days)\n"
+	section := ":memo: *Open Quotes*\n"
 
 	for _, q := range quotes {
-		statusEmoji := ":hourglass_flowing_sand:"
-		switch strings.ToUpper(q.Status) {
-		case "OPEN":
-			statusEmoji = ":hourglass_flowing_sand:"
-		case "ACCEPTED":
-			statusEmoji = ":white_check_mark:"
-		case "CANCELED", "EXPIRED":
-			statusEmoji = ":x:"
-		}
+		section += "\n" + formatQuoteSection(q)
+	}
 
-		name := q.Name
-		if name == "" {
-			name = q.Quote
-		}
+	return section
+}
 
-		total := q.TotalDisplay
-		if total == "" {
-			total = formatAnyAmount(q.Total, q.Currency)
-		}
+func formatQuoteSection(q QuoteAPIData) string {
+	name := q.Name
+	if name == "" {
+		name = q.Quote
+	}
 
-		// Get recipient info
-		recipientName := ""
-		if recipient, ok := q.Recipient.(map[string]any); ok {
-			first := getStringField(recipient, "first")
-			last := getStringField(recipient, "last")
-			recipientName = strings.TrimSpace(first + " " + last)
-			if recipientName == "" {
-				recipientName = getStringField(recipient, "email")
-			}
-		}
+	total := q.TotalDisplay
+	if total == "" {
+		total = formatAnyAmount(q.Total, q.Currency)
+	}
 
-		section += fmt.Sprintf("\n%s  *%s*  •  %s", statusEmoji, name, total)
-		if recipientName != "" {
-			section += fmt.Sprintf("  •  %s", recipientName)
-		}
-		section += fmt.Sprintf("  •  _%s_", q.Status)
+	// Get recipient info
+	recipientName := ""
+	recipientEmail := ""
+	recipientCompany := ""
+	if recipient, ok := q.Recipient.(map[string]any); ok {
+		first := getStringField(recipient, "first")
+		last := getStringField(recipient, "last")
+		recipientName = strings.TrimSpace(first + " " + last)
+		recipientEmail = getStringField(recipient, "email")
+		recipientCompany = getStringField(recipient, "company")
+	}
+
+	// Format similar to customer section
+	section := fmt.Sprintf(":memo: *%s*", name)
+	if recipientName != "" {
+		section += fmt.Sprintf("  •  %s", recipientName)
+	}
+	if recipientCompany != "" {
+		section += fmt.Sprintf(" (%s)", recipientCompany)
+	}
+	if recipientEmail != "" {
+		section += fmt.Sprintf("\n      %s", recipientEmail)
+	}
+
+	// Status line with emoji
+	statusEmoji := ":hourglass_flowing_sand:"
+	switch strings.ToUpper(q.Status) {
+	case "OPEN":
+		statusEmoji = ":hourglass_flowing_sand:"
+	case "AWAITING_PAYMENT":
+		statusEmoji = ":credit_card:"
+	case "ACCEPTED":
+		statusEmoji = ":white_check_mark:"
+	case "CANCELED", "EXPIRED":
+		statusEmoji = ":x:"
+	}
+
+	section += fmt.Sprintf("\n\n      %s  %s  •  *%s*", statusEmoji, q.Status, total)
+
+	// Add expiry if available
+	if q.Expires != "" {
+		section += fmt.Sprintf("  •  Expires: %s", q.Expires)
+	}
+
+	// Add quote URL if available
+	if q.QuoteUrl != "" {
+		section += fmt.Sprintf("\n      :link: <%s|View Quote>", q.QuoteUrl)
 	}
 
 	return section
