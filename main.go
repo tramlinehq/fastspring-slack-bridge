@@ -122,15 +122,9 @@ type QuoteData struct {
 // Fastspring API response types (for digest)
 
 type SubscriptionListResponse struct {
-	Action        string   `json:"action"`
-	Result        string   `json:"result"`
-	NextPage      *int     `json:"nextPage"`
-	Subscriptions []string `json:"subscriptions"`
-}
-
-type SubscriptionDetailResponse struct {
 	Action        string               `json:"action"`
 	Result        string               `json:"result"`
+	NextPage      *int                 `json:"nextPage"`
 	Subscriptions []SubscriptionDetail `json:"subscriptions"`
 }
 
@@ -636,8 +630,8 @@ func fastspringAPIRequest(method, path string, body io.Reader) (*http.Response, 
 	return client.Do(req)
 }
 
-func fetchAllActiveSubscriptionIDs() ([]string, error) {
-	var allIDs []string
+func fetchAllActiveSubscriptions() ([]SubscriptionDetail, error) {
+	var allSubs []SubscriptionDetail
 	page := 1
 
 	for {
@@ -658,7 +652,7 @@ func fetchAllActiveSubscriptionIDs() ([]string, error) {
 			return nil, fmt.Errorf("failed to decode subscriptions list: %w", err)
 		}
 
-		allIDs = append(allIDs, result.Subscriptions...)
+		allSubs = append(allSubs, result.Subscriptions...)
 
 		if result.NextPage == nil || *result.NextPage == 0 {
 			break
@@ -666,32 +660,7 @@ func fetchAllActiveSubscriptionIDs() ([]string, error) {
 		page = *result.NextPage
 	}
 
-	return allIDs, nil
-}
-
-func fetchSubscriptionDetails(ids []string) ([]SubscriptionDetail, error) {
-	payload, err := json.Marshal(ids)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal subscription IDs: %w", err)
-	}
-
-	resp, err := fastspringAPIRequest("POST", "/subscriptions", bytes.NewBuffer(payload))
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch subscription details: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("subscription details returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var result SubscriptionDetailResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode subscription details: %w", err)
-	}
-
-	return result.Subscriptions, nil
+	return allSubs, nil
 }
 
 func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error) {
@@ -725,57 +694,35 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Starting weekly payment digest generation")
 
-	// 1. Fetch all active subscription IDs
-	subIDs, err := fetchAllActiveSubscriptionIDs()
+	// 1. Fetch all active subscriptions (includes details)
+	subscriptions, err := fetchAllActiveSubscriptions()
 	if err != nil {
-		log.Printf("Error fetching subscription IDs: %v", err)
+		log.Printf("Error fetching subscriptions: %v", err)
 		sendErrorNotification("Digest: failed to fetch subscriptions", err.Error())
 		http.Error(w, "Failed to fetch subscriptions", http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Found %d active subscriptions", len(subIDs))
+	log.Printf("Found %d active subscriptions", len(subscriptions))
 
-	if len(subIDs) == 0 {
+	if len(subscriptions) == 0 {
 		log.Printf("No active subscriptions found, skipping digest")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("no active subscriptions"))
 		return
 	}
 
-	// 2. Fetch subscription details in batches of 50
-	detailMap := make(map[string]SubscriptionDetail)
-	for i := 0; i < len(subIDs); i += 50 {
-		end := i + 50
-		if end > len(subIDs) {
-			end = len(subIDs)
-		}
-		batch := subIDs[i:end]
-
-		details, err := fetchSubscriptionDetails(batch)
-		if err != nil {
-			log.Printf("Error fetching subscription details batch %d-%d: %v", i, end, err)
-			sendErrorNotification("Digest: failed to fetch subscription details", err.Error())
-			http.Error(w, "Failed to fetch subscription details", http.StatusInternalServerError)
-			return
-		}
-
-		for _, d := range details {
-			detailMap[d.ID] = d
-		}
-	}
-
-	// 3. Fetch entries for each subscription
+	// 2. Fetch entries for each subscription
 	type subWithEntries struct {
 		Detail  SubscriptionDetail
 		Entries []SubscriptionEntry
 	}
 	var allSubs []subWithEntries
 
-	for _, id := range subIDs {
-		entries, err := fetchSubscriptionEntries(id)
+	for _, sub := range subscriptions {
+		entries, err := fetchSubscriptionEntries(sub.ID)
 		if err != nil {
-			log.Printf("Error fetching entries for %s: %v", id, err)
+			log.Printf("Error fetching entries for %s: %v", sub.ID, err)
 			continue
 		}
 
@@ -784,13 +731,7 @@ func digestHandler(w http.ResponseWriter, r *http.Request) {
 			entries = entries[len(entries)-5:]
 		}
 
-		detail, ok := detailMap[id]
-		if !ok {
-			log.Printf("No detail found for subscription %s, skipping", id)
-			continue
-		}
-
-		allSubs = append(allSubs, subWithEntries{Detail: detail, Entries: entries})
+		allSubs = append(allSubs, subWithEntries{Detail: sub, Entries: entries})
 
 		// Rate limiting: stay under 250 req/min
 		time.Sleep(300 * time.Millisecond)
