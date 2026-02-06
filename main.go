@@ -55,16 +55,20 @@ type Item struct {
 }
 
 type SubscriptionData struct {
-	ID           string   `json:"id"`
-	Subscription string   `json:"subscription"`
-	Product      string   `json:"product"`
-	Currency     string   `json:"currency"`
-	Total        any      `json:"total"`
-	TotalDisplay string   `json:"totalDisplay"`
-	Customer     Customer `json:"customer"`
-	State        string   `json:"state"`
-	NextDate     string   `json:"next"`
-	EndDate      string   `json:"end"`
+	ID                     string   `json:"id"`
+	Subscription           string   `json:"subscription"`
+	Product                string   `json:"product"`
+	Display                string   `json:"display"`
+	Currency               string   `json:"currency"`
+	Total                  any      `json:"total"`
+	TotalDisplay           string   `json:"totalDisplay"`
+	Customer               Customer `json:"customer"`
+	State                  string   `json:"state"`
+	Next                   any      `json:"next"`
+	NextDisplay            string   `json:"nextDisplay"`
+	NextChargeTotalDisplay string   `json:"nextChargeTotalDisplay"`
+	End                    any      `json:"end"`
+	EndDisplay             string   `json:"endDisplay"`
 }
 
 type SubscriptionChargeData struct {
@@ -469,6 +473,11 @@ func formatOrderMessage(data OrderData, live bool, title string, severity string
 func formatSubscriptionMessage(data SubscriptionData, live bool, title string, severity string) SlackMessage {
 	emoji := severityEmoji(severity)
 
+	productDisplay := data.Display
+	if productDisplay == "" {
+		productDisplay = data.Product
+	}
+
 	text := fmt.Sprintf(":%s: %s\n\nCustomer: %s %s (%s)\nSubscription: %s\nProduct: %s",
 		emoji,
 		title,
@@ -476,14 +485,17 @@ func formatSubscriptionMessage(data SubscriptionData, live bool, title string, s
 		data.Customer.Last,
 		data.Customer.Email,
 		data.Subscription,
-		data.Product,
+		productDisplay,
 	)
 
-	if data.NextDate != "" {
-		text += fmt.Sprintf("\nNext billing: %s", data.NextDate)
+	if data.NextDisplay != "" {
+		text += fmt.Sprintf("\nNext billing: %s", data.NextDisplay)
+		if data.NextChargeTotalDisplay != "" {
+			text += fmt.Sprintf(" (%s)", data.NextChargeTotalDisplay)
+		}
 	}
-	if data.EndDate != "" {
-		text += fmt.Sprintf("\nEnds: %s", data.EndDate)
+	if data.EndDisplay != "" {
+		text += fmt.Sprintf("\nEnds: %s", data.EndDisplay)
 	}
 
 	return SlackMessage{Text: text}
