@@ -63,6 +63,7 @@ type SubscriptionData struct {
 	Total                  any      `json:"total"`
 	TotalDisplay           string   `json:"totalDisplay"`
 	Customer               Customer `json:"customer"`
+	Account                string   `json:"account"`
 	State                  string   `json:"state"`
 	Next                   any      `json:"next"`
 	NextDisplay            string   `json:"nextDisplay"`
@@ -383,6 +384,15 @@ func handleSubscriptionEvent(event Event, title string, severity string) error {
 	var data SubscriptionData
 	if err := json.Unmarshal(event.Data, &data); err != nil {
 		return fmt.Errorf("failed to parse subscription data: %w", err)
+	}
+
+	// If customer info is missing, fetch from account
+	if data.Customer.Email == "" && data.Account != "" {
+		if contact, err := fetchAccountContact(data.Account); err == nil {
+			data.Customer = contact
+		} else {
+			log.Printf("Failed to fetch account contact for %s: %v", data.Account, err)
+		}
 	}
 
 	message := formatSubscriptionMessage(data, event.Live, title, severity)
@@ -731,6 +741,48 @@ func fetchRecentQuotes() ([]QuoteAPIData, error) {
 
 	log.Printf("Fetched %d quotes", len(result.Embedded.Quotes))
 	return result.Embedded.Quotes, nil
+}
+
+// AccountResponse represents the Fastspring account API response
+type AccountResponse struct {
+	ID      string `json:"id"`
+	Account string `json:"account"`
+	Contact struct {
+		First   string `json:"first"`
+		Last    string `json:"last"`
+		Email   string `json:"email"`
+		Company string `json:"company"`
+	} `json:"contact"`
+}
+
+func fetchAccountContact(accountID string) (Customer, error) {
+	if accountID == "" {
+		return Customer{}, nil
+	}
+
+	path := fmt.Sprintf("/accounts/%s", accountID)
+	resp, err := fastspringAPIRequest("GET", path, nil)
+	if err != nil {
+		return Customer{}, fmt.Errorf("failed to fetch account %s: %w", accountID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return Customer{}, fmt.Errorf("account %s returned %d: %s", accountID, resp.StatusCode, string(body))
+	}
+
+	var result AccountResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return Customer{}, fmt.Errorf("failed to decode account %s: %w", accountID, err)
+	}
+
+	return Customer{
+		First:   result.Contact.First,
+		Last:    result.Contact.Last,
+		Email:   result.Contact.Email,
+		Company: result.Contact.Company,
+	}, nil
 }
 
 func fetchSubscriptionEntries(subscriptionID string) ([]SubscriptionEntry, error) {
